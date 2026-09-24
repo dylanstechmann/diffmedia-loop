@@ -4,18 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "medialoop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Closed-loop in-vitro media search against a synthetic surface."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Dylan Stechmann"}]
 dependencies = [
-  "numpy",
+  "numpy>=1.24,<3",
 ]
 
 [project.scripts]
 medialoop = "medialoop.cli:main"
+medialoop-plan = "medialoop.planner:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

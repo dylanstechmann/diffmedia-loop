@@ -29,3 +29,36 @@ Python 3.10+ and numpy.
 ## License
 
 MIT.
+
+## Plan from recorded measurements (v0.2)
+
+`medialoop-plan` reads a collaborator-reviewed candidate table, completed
+observations and pending IDs. It proposes one unused candidate, records input
+hashes and never calls the synthetic response function. Install with
+`python -m pip install -e .`.
+
+```bash
+medialoop-plan --candidates examples/candidates.csv \
+  --observations examples/observations.csv --pending examples/pending.csv \
+  --seed 0 --out artifacts/proposal.json
+```
+
+These example IDs, factor combinations and readouts are **synthetic software
+fixtures**, not an experimental design for a cell line. A paper reporting each
+factor separately does not validate their Cartesian product or timing.
+
+- Candidates: unique `candidate_id` plus all four factor columns in `space.py`.
+- Observations: `candidate_id,response`; the finite response is maximized.
+- Pending: `candidate_id`; completed and pending IDs cannot overlap.
+- A candidate can appear once in observations. Aggregate replicates explicitly
+  and retain their raw data elsewhere; this GP assumes a common noise scale.
+- With fewer than two observations the selection is random and reproducible.
+  Otherwise it uses expected improvement with fixed GP hyperparameters.
+- Record the proposal in the pending table **before** asking again. The planner
+  is stateless and does not reserve conditions or coordinate concurrent users.
+- On completion, remove the pending ID and add its observed response.
+
+Unknown IDs, duplicate conditions, nonfinite values, out-of-box factors and an
+exhausted candidate set are rejected. Output files are created exclusively.
+`--noise` is an assumed response standard deviation, not an estimated noise
+model. The fixed GP is a baseline and its uncertainty is not calibrated on cells.

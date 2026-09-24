@@ -30,10 +30,18 @@ def _kernel(a: np.ndarray, b: np.ndarray, length: float) -> np.ndarray:
 
 
 def predict(x_train: np.ndarray, y: np.ndarray, x_cand: np.ndarray, length: float = 0.35, noise: float = 0.02):
+    x_train, y, x_cand = (np.asarray(value, dtype=float) for value in (x_train, y, x_cand))
+    if (x_train.ndim != 2 or x_train.shape[1] != len(FACTORS) or not len(x_train)
+            or y.shape != (len(x_train),) or x_cand.ndim != 2
+            or x_cand.shape[1] != len(FACTORS) or not len(x_cand)):
+        raise ValueError("GP needs nonempty factor matrices and one response per training row")
+    if not all(np.isfinite(value).all() for value in (x_train, y, x_cand)):
+        raise ValueError("GP inputs must be finite")
+    if not np.isfinite(length) or length <= 0 or not np.isfinite(noise) or noise < 0:
+        raise ValueError("length must be positive and noise nonnegative, both finite")
     y_mean = float(y.mean())
-    y_std = float(y.std())
-    if y_std < 1e-8:
-        return np.full(len(x_cand), y_mean), np.ones(len(x_cand)) * 1e-3
+    # Flat initial readouts still leave uncertainty away from measured points.
+    y_std = max(float(y.std()), noise, 1e-3)
     yn = (y - y_mean) / y_std
     xn = normalize(x_train)
     cn = normalize(x_cand)

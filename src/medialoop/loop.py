@@ -43,6 +43,9 @@ def random_search(objective, budget: int, seed: int):
 
 
 def inside_bounds(x: np.ndarray) -> bool:
+    x = np.asarray(x)
+    if x.ndim != 2 or x.shape[1] != len(FACTORS) or not np.isfinite(x).all():
+        return False
     for col, item in enumerate(FACTORS):
         if np.any(x[:, col] < item["low"] - 1e-9) or np.any(x[:, col] > item["high"] + 1e-9):
             return False
