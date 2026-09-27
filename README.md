@@ -109,3 +109,23 @@ while updating observations/pending files, then resume with new request IDs.
 Preview mode can still display already-reserved conditions because it does not
 read the ledger. Store the ledger alongside its recovery journal files outside
 Git and use SQLite-aware backups while it is active.
+
+## Acquisition bake-off (v0.3)
+
+`medialoop-bakeoff` compares the current planner (expected improvement) with
+random search, fixed-kappa UCB, and one-draw Thompson sampling on a **fixed
+grid** inside the published windows. A fifth policy, repeat expected
+improvement, re-proposes the same candidate inside a batch so violations are
+visible. Guarded policies fantasize at the posterior mean within a batch
+(kriging believer) and call the cartoon only once per chosen grid point.
+
+```bash
+PYTHONPATH=src python3 -m medialoop.bakeoff --objective cardiac --seeds 6
+```
+
+Report simple regret against the best point **on that grid**, cumulative
+regret, and batch-uniqueness violations. This is still the synthetic surface.
+It is not a dose, and it is not a reason to plate a well. A neural policy is
+intentionally absent: a course project can add one behind the same regret
+and violation columns without replacing the expected-improvement baseline.
+

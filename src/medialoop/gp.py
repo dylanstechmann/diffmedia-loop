@@ -61,3 +61,17 @@ def expected_improvement(mu: np.ndarray, sigma: np.ndarray, best: float, xi: flo
     improve = mu - best - xi
     z = improve / sigma
     return improve * _Phi(z) + sigma * _phi(z)
+
+
+def upper_confidence_bound(mu: np.ndarray, sigma: np.ndarray, kappa: float = 1.5) -> np.ndarray:
+    """Fixed-kappa UCB. kappa is a baseline, not a calibrated confidence level."""
+    if not np.isfinite(kappa) or kappa < 0:
+        raise ValueError("kappa must be finite and nonnegative")
+    return np.asarray(mu, dtype=float) + kappa * np.maximum(np.asarray(sigma, dtype=float), 0.0)
+
+
+def thompson_draw(mu: np.ndarray, sigma: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """One posterior draw per candidate. Not a multi-sample Thompson average."""
+    sigma = np.maximum(np.asarray(sigma, dtype=float), 1e-9)
+    return rng.normal(np.asarray(mu, dtype=float), sigma)
+
