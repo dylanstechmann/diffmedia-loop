@@ -54,11 +54,58 @@ factor separately does not validate their Cartesian product or timing.
   and retain their raw data elsewhere; this GP assumes a common noise scale.
 - With fewer than two observations the selection is random and reproducible.
   Otherwise it uses expected improvement with fixed GP hyperparameters.
-- Record the proposal in the pending table **before** asking again. The planner
-  is stateless and does not reserve conditions or coordinate concurrent users.
+- Without a reservation ledger, record the proposal in the pending table
+  **before** asking again. This preview mode does not reserve conditions or
+  coordinate concurrent users.
 - On completion, remove the pending ID and add its observed response.
 
 Unknown IDs, duplicate conditions, nonfinite values, out-of-box factors and an
 exhausted candidate set are rejected. Output files are created exclusively.
 `--noise` is an assumed response standard deviation, not an estimated noise
 model. The fixed GP is a baseline and its uncertainty is not calibrated on cells.
+
+## Reserve a candidate atomically
+
+Use one shared **local** SQLite ledger for all callers that need reservations:
+
+```bash
+medialoop-plan --candidates examples/candidates.csv \
+  --observations examples/observations.csv --pending examples/pending.csv \
+  --reserve-ledger artifacts/reservations.sqlite3 --request-id round-001 \
+  --seed 0 --out artifacts/round-001.json
+```
+
+Selection and reservation commit in a single transaction before the proposal
+is returned. Concurrent processes using that ledger cannot reserve the same
+condition under different request IDs. Existing observed/pending CSV entries
+are also excluded. The command reads those CSVs and writes the ledger and
+proposal JSON; it never edits the CSVs. Input hashes describe the exact bytes
+parsed for the original proposal.
+
+Choose a new `--request-id` for each new request. Retry with the **same** ID,
+candidate table, seed and noise to recover its original proposal, even after
+observations change. This also recovers a committed reservation after output
+export fails or the caller loses its connection. Retry with a new output path
+if the previous export is partial or contains different text; an existing exact
+export is accepted. A retry returns a historical proposal and does not reserve
+another condition. The Python equivalent is
+`medialoop.reservations.propose_and_reserve(..., ledger_path=..., request_id=...)`;
+`medialoop.planner.propose(...)` remains a read-only preview.
+
+The first successful reservation binds the ledger to the candidate CSV's exact
+SHA-256. Keep that table unchanged. Reservations remain recorded after their
+responses are added to the observations CSV, so completed conditions cannot
+be issued again. There is intentionally no release/reissue command. Do not
+delete, replace or copy the ledger to start another round of the same campaign;
+doing so loses coordination. If a condition was also listed in a manual pending
+CSV, remove that entry when adding its response to observations.
+
+SQLite releases locks and rolls back uncommitted writes when a process exits.
+Callers wait up to 30 seconds for a writer before returning an error; retry with
+the same request ID. Use a local filesystem with reliable SQLite locking, not
+network shares or cloud-synced copies. All reserving callers must use this API
+and ledger. Manual CSV updates are outside the transaction: pause submissions
+while updating observations/pending files, then resume with new request IDs.
+Preview mode can still display already-reserved conditions because it does not
+read the ledger. Store the ledger alongside its recovery journal files outside
+Git and use SQLite-aware backups while it is active.
