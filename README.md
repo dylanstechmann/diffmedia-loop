@@ -18,9 +18,21 @@ On 12 seeds and a budget of 20 evaluations, mean best score was about **0.74 vs 
 make test
 PYTHONPATH=src python3 -m medialoop.cli --objective cardiac --seeds 12
 PYTHONPATH=src python3 -m medialoop.cli --objective neural --seeds 12
+
+# Run simulation with batch acquisition
+PYTHONPATH=src python3 -m medialoop.cli --objective cardiac --batch-size 4 --batch-strategy kriging_believer
 ```
 
 Python 3.10+ and numpy.
+
+### Batch acquisition (Kriging Believer and Constant Liar)
+
+To suggest multiple conditions per round, use `--batch-size N` and
+`--batch-strategy` with `kriging_believer`, `constant_liar_min`,
+`constant_liar_max`, or `constant_liar_mean` on `medialoop` or
+`medialoop-plan`. Kriging Believer uses the GP posterior mean as a temporary
+readout for each intermediate candidate. Constant Liar uses the minimum,
+maximum, or mean of observed responses as that temporary readout.
 
 ## Hooking a real assay later
 

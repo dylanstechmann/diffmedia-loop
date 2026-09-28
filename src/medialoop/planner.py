@@ -51,14 +51,16 @@ def _inputs(candidates_path, observations_path, pending_path):
                                         "observations": observations_hash, "pending": pending_hash}
 
 
-def propose(candidates_path, observations_path=None, pending_path=None, *, seed=0, noise=0.02):
-    """Preview one candidate without reserving it or modifying input files."""
-    return _propose(*_inputs(candidates_path, observations_path, pending_path), seed=seed, noise=noise)
+def propose(candidates_path, observations_path=None, pending_path=None, *, seed=0, noise=0.02, batch_size=1, batch_strategy="kriging_believer"):
+    """Preview candidate(s) without reserving or modifying input files."""
+    return _propose(*_inputs(candidates_path, observations_path, pending_path), seed=seed, noise=noise, batch_size=batch_size, batch_strategy=batch_strategy)
 
 
-def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=()):
+def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(), batch_size=1, batch_strategy="kriging_believer"):
     if not np.isfinite(noise) or noise < 0:
         raise ValueError("noise must be finite and nonnegative")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
     if not rows:
         raise ValueError("empty candidate list")
     x = np.array([[float(row[name]) for name in NAMES] for row in rows])
@@ -81,33 +83,114 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
     available = [i for i, name in enumerate(ids) if name not in observed_ids | pending_ids]
     if not available:
         raise ValueError("no unevaluated, nonpending candidates remain")
+    if batch_size > len(available):
+        raise ValueError(f"requested batch_size {batch_size} exceeds {len(available)} available candidates")
     rng = np.random.default_rng(seed)
-    mu = sigma = acquisition = None
-    if len(observations) < 2:
-        chosen = int(rng.choice(available))
-        method = "random_initialization"
-    else:
-        measured = [lookup[row["candidate_id"]] for row in observations]
-        means, stds = predict(x[measured], y, x[available], noise=noise)
-        ei = expected_improvement(means, stds, float(y.max()))
-        # Resolve ties reproducibly without systematically selecting the first CSV row.
-        best = np.flatnonzero(np.isclose(ei, ei.max(), rtol=1e-10, atol=1e-15))
-        local = int(rng.choice(best))
-        chosen = available[local]
-        mu, sigma, acquisition = float(means[local]), float(stds[local]), float(ei[local])
-        method = "expected_improvement"
-    return {"schema_version": 1, "candidate_id": ids[chosen], "factors": dict(zip(NAMES, x[chosen].tolist())),
-            "method": method, "predicted_mean": mu, "predicted_std": sigma,
-            "expected_improvement": acquisition, "seed": seed, "noise": noise,
-            "n_observed": len(observations), "n_pending": len(pending_ids), "input_sha256": hashes,
-            "note": "Maximizes the supplied response. A proposal is not an executable protocol. Record it as pending before asking again."}
+
+    if batch_size == 1:
+        mu = sigma = acquisition = None
+        if len(observations) < 2:
+            chosen = int(rng.choice(available))
+            method = "random_initialization"
+        else:
+            measured = [lookup[row["candidate_id"]] for row in observations]
+            means, stds = predict(x[measured], y, x[available], noise=noise)
+            ei = expected_improvement(means, stds, float(y.max()))
+            # Resolve ties reproducibly without systematically selecting the first CSV row.
+            best = np.flatnonzero(np.isclose(ei, ei.max(), rtol=1e-10, atol=1e-15))
+            local = int(rng.choice(best))
+            chosen = available[local]
+            mu, sigma, acquisition = float(means[local]), float(stds[local]), float(ei[local])
+            method = "expected_improvement"
+        return {"schema_version": 1, "candidate_id": ids[chosen], "factors": dict(zip(NAMES, x[chosen].tolist())),
+                "method": method, "predicted_mean": mu, "predicted_std": sigma,
+                "expected_improvement": acquisition, "seed": seed, "noise": noise,
+                "n_observed": len(observations), "n_pending": len(pending_ids), "input_sha256": hashes,
+                "note": "Maximizes the supplied response. A proposal is not an executable protocol. Record it as pending before asking again."}
+
+    # Batch acquisition (batch_size > 1) via Kriging Believer or Constant Liar
+    cur_measured = [lookup[row["candidate_id"]] for row in observations]
+    cur_x = x[cur_measured] if cur_measured else np.empty((0, len(NAMES)))
+    cur_y = np.copy(y)
+    cur_available = list(available)
+    proposals = []
+
+    for b in range(batch_size):
+        if len(cur_y) < 2 or len(cur_x) < 2:
+            chosen = int(rng.choice(cur_available))
+            method = "random_initialization"
+            mu = sigma = acquisition = None
+        else:
+            avail_cand_x = x[cur_available]
+            means, stds = predict(cur_x, cur_y, avail_cand_x, noise=noise)
+            ei = expected_improvement(means, stds, float(cur_y.max()))
+            best = np.flatnonzero(np.isclose(ei, ei.max(), rtol=1e-10, atol=1e-15))
+            local = int(rng.choice(best))
+            chosen = cur_available[local]
+            mu, sigma, acquisition = float(means[local]), float(stds[local]), float(ei[local])
+            method = "expected_improvement"
+
+        proposals.append({
+            "candidate_id": ids[chosen],
+            "factors": dict(zip(NAMES, x[chosen].tolist())),
+            "method": method,
+            "predicted_mean": mu,
+            "predicted_std": sigma,
+            "expected_improvement": acquisition,
+        })
+        cur_available.remove(chosen)
+
+        if b < batch_size - 1:
+            pick_x = x[chosen:chosen + 1]
+            if len(cur_y) >= 2 and len(cur_x) >= 2:
+                if batch_strategy == "kriging_believer":
+                    imputed_y = mu if mu is not None else float(cur_y.mean())
+                elif batch_strategy == "constant_liar_min":
+                    imputed_y = float(cur_y.min())
+                elif batch_strategy == "constant_liar_max":
+                    imputed_y = float(cur_y.max())
+                elif batch_strategy == "constant_liar_mean":
+                    imputed_y = float(cur_y.mean())
+                else:
+                    raise ValueError(f"unknown batch strategy: {batch_strategy!r}")
+            else:
+                imputed_y = 0.5
+            cur_x = np.vstack([cur_x, pick_x]) if len(cur_x) else pick_x
+            cur_y = np.append(cur_y, imputed_y)
+
+    return {
+        "schema_version": 1,
+        "batch_size": batch_size,
+        "batch_strategy": batch_strategy,
+        "candidates": [p["candidate_id"] for p in proposals],
+        "proposals": proposals,
+        "candidate_id": proposals[0]["candidate_id"],
+        "factors": proposals[0]["factors"],
+        "method": proposals[0]["method"],
+        "predicted_mean": proposals[0]["predicted_mean"],
+        "predicted_std": proposals[0]["predicted_std"],
+        "expected_improvement": proposals[0]["expected_improvement"],
+        "seed": seed,
+        "noise": noise,
+        "n_observed": len(observations),
+        "n_pending": len(pending_ids),
+        "input_sha256": hashes,
+        "note": "Maximizes the supplied response with batch acquisition. Record proposals as pending before asking again.",
+    }
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Propose one unmeasured condition from a reviewed candidate table")
+    parser = argparse.ArgumentParser(description="Propose unmeasured conditions from a reviewed candidate table")
     parser.add_argument("--candidates", required=True)
     parser.add_argument("--observations")
     parser.add_argument("--pending")
+    parser.add_argument("--batch-size", type=int, default=1, help="number of candidates to propose in batch")
+    parser.add_argument(
+        "--batch-strategy",
+        choices=["kriging_believer", "constant_liar_min", "constant_liar_max", "constant_liar_mean"],
+        default="kriging_believer",
+        help="heuristic for batch acquisition",
+    )
     parser.add_argument("--reserve-ledger", help="atomically reserve in this local SQLite ledger")
     parser.add_argument("--request-id", help="unique request key; reuse it to recover the same reservation")
     parser.add_argument("--seed", type=int, default=0)
@@ -116,6 +199,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if bool(args.reserve_ledger) != bool(args.request_id):
         parser.error("--reserve-ledger and --request-id must be supplied together")
+    if args.reserve_ledger and args.batch_size > 1:
+        parser.error("batch_size > 1 with SQLite reservation ledger is not supported; use preview mode or reserve sequentially")
     try:
         if args.reserve_ledger:
             from medialoop.reservations import propose_and_reserve
@@ -123,7 +208,8 @@ def main(argv=None):
                                          ledger_path=args.reserve_ledger, request_id=args.request_id,
                                          seed=args.seed, noise=args.noise)
         else:
-            result = propose(args.candidates, args.observations, args.pending, seed=args.seed, noise=args.noise)
+            result = propose(args.candidates, args.observations, args.pending, seed=args.seed, noise=args.noise,
+                             batch_size=args.batch_size, batch_strategy=args.batch_strategy)
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(result, indent=2, allow_nan=False) + "\n"

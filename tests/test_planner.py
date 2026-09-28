@@ -56,3 +56,31 @@ class PlannerTests(unittest.TestCase):
         result = propose(self.candidates, seed=10)
         self.assertEqual(result, propose(self.candidates, seed=10))
         self.assertEqual(result["method"], "random_initialization")
+
+    def test_batch_propose_and_cli(self):
+        from medialoop.planner import main
+        # 2 available: c and d (a and b observed)
+        res_batch = propose(self.candidates, self.observed, batch_size=2, batch_strategy="kriging_believer")
+        self.assertEqual(res_batch["batch_size"], 2)
+        self.assertEqual(len(res_batch["proposals"]), 2)
+        self.assertEqual(set(res_batch["candidates"]), {"c", "d"})
+
+        # Constant liar min
+        res_cl = propose(self.candidates, self.observed, batch_size=2, batch_strategy="constant_liar_min")
+        self.assertEqual(len(res_cl["proposals"]), 2)
+
+        # Batch size exceeding available candidates
+        with self.assertRaises(ValueError):
+            propose(self.candidates, self.observed, batch_size=3)
+
+        # CLI test
+        out_json = self.root / "batch_out.json"
+        code = main([
+            "--candidates", str(self.candidates),
+            "--observations", str(self.observed),
+            "--batch-size", "2",
+            "--out", str(out_json),
+        ])
+        self.assertEqual(code, 0)
+        self.assertTrue(out_json.exists())
+

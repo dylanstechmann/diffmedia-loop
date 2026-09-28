@@ -46,6 +46,38 @@ class LoopTests(unittest.TestCase):
         self.assertTrue(inside_bounds(result["x"]))
         self.assertEqual(len(result["true"]), 7)
 
+    def test_batch_acquire_strategies(self):
+        from medialoop.loop import batch_acquire
+        pool = np.random.default_rng(42).uniform(0, 5, size=(20, 4))
+        x_init = pool[:3]
+        y_init = np.array([0.2, 0.5, 0.4])
+        for strat in ["kriging_believer", "constant_liar_min", "constant_liar_max", "constant_liar_mean"]:
+            picks = batch_acquire(x_init, y_init, pool[3:], batch_size=4, strategy=strat, noise=0.02)
+            self.assertEqual(len(picks), 4)
+            self.assertEqual(len(set(picks)), 4)
+
+        with self.assertRaises(ValueError):
+            batch_acquire(x_init, y_init, pool[3:], batch_size=0)
+        with self.assertRaises(ValueError):
+            batch_acquire(x_init, y_init, pool[3:], batch_size=100)
+
+    def test_batch_run_simulation(self):
+        result = run(cardiac, 4, 3, seed=1, batch_size=3, batch_strategy="kriging_believer")
+        self.assertTrue(inside_bounds(result["x"]))
+        self.assertEqual(len(result["true"]), 4 + 3 * 3)
+        self.assertEqual(result["x"].shape[0], 13)
+
+    def test_cli_batch_bakeoff(self):
+        from medialoop.cli import bakeoff, main
+        res = bakeoff("cardiac", seeds=2, batch_size=2)
+        self.assertEqual(res["batch_size"], 2)
+        self.assertEqual(res["budget"], 8 + 12 * 2)
+        self.assertIn("mean_best_expected_improvement", res)
+        # Test CLI invocation
+        code = main(["--objective", "cardiac", "--seeds", "1", "--batch-size", "2"])
+        self.assertEqual(code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
