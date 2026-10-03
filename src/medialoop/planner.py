@@ -59,7 +59,7 @@ def propose(candidates_path, observations_path=None, pending_path=None, *, seed=
 def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(), batch_size=1, batch_strategy="kriging_believer"):
     if not np.isfinite(noise) or noise < 0:
         raise ValueError("noise must be finite and nonnegative")
-    if batch_size <= 0:
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
         raise ValueError("batch_size must be a positive integer")
     if not rows:
         raise ValueError("empty candidate list")
@@ -86,6 +86,11 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
     if batch_size > len(available):
         raise ValueError(f"requested batch_size {batch_size} exceeds {len(available)} available candidates")
     rng = np.random.default_rng(seed)
+    model_ready = len(observations) >= 2
+    if batch_size > 1 and model_ready and batch_strategy not in {
+        "kriging_believer", "constant_liar_min", "constant_liar_max", "constant_liar_mean"
+    }:
+        raise ValueError(f"unknown batch strategy: {batch_strategy!r}")
 
     if batch_size == 1:
         mu = sigma = acquisition = None
@@ -140,7 +145,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
         })
         cur_available.remove(chosen)
 
-        if b < batch_size - 1:
+        if b < batch_size - 1 and model_ready:
             pick_x = x[chosen:chosen + 1]
             if len(cur_y) >= 2 and len(cur_x) >= 2:
                 if batch_strategy == "kriging_believer":
@@ -153,15 +158,13 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
                     imputed_y = float(cur_y.mean())
                 else:
                     raise ValueError(f"unknown batch strategy: {batch_strategy!r}")
-            else:
-                imputed_y = 0.5
             cur_x = np.vstack([cur_x, pick_x]) if len(cur_x) else pick_x
             cur_y = np.append(cur_y, imputed_y)
 
     return {
         "schema_version": 1,
         "batch_size": batch_size,
-        "batch_strategy": batch_strategy,
+        "batch_strategy": batch_strategy if model_ready else "random_initialization_no_model",
         "candidates": [p["candidate_id"] for p in proposals],
         "proposals": proposals,
         "candidate_id": proposals[0]["candidate_id"],
@@ -175,7 +178,8 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
         "n_observed": len(observations),
         "n_pending": len(pending_ids),
         "input_sha256": hashes,
-        "note": "Maximizes the supplied response with batch acquisition. Record proposals as pending before asking again.",
+        "note": ("Batch uses a GP acquisition with explicit fantasy values; fantasies are not observed readouts. Record proposals as pending before asking again."
+                 if model_ready else "Insufficient observed readouts for a GP fit; every batch member was selected by seeded random initialization."),
     }
 
 

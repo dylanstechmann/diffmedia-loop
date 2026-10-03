@@ -84,3 +84,17 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(out_json.exists())
 
+    def test_cold_start_batch_never_trains_on_fantasy_responses(self):
+        result = propose(self.candidates, batch_size=4, seed=11)
+        self.assertEqual(result["n_observed"], 0)
+        self.assertEqual(result["batch_strategy"], "random_initialization_no_model")
+        self.assertTrue(all(row["method"] == "random_initialization" for row in result["proposals"]))
+        self.assertTrue(all(row["predicted_mean"] is None for row in result["proposals"]))
+        self.assertTrue(all(row["expected_improvement"] is None for row in result["proposals"]))
+        self.assertIn("every batch member", result["note"])
+
+    def test_planner_rejects_noninteger_batch_sizes(self):
+        for value in [True, 0, -1, 1.5]:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "positive integer"):
+                propose(self.candidates, batch_size=value)
+
