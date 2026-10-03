@@ -1,0 +1,172 @@
+[
+  {
+    "schema_version": 1,
+    "protocol_id": "giwi_cardiac",
+    "title": "Wnt-modulated cardiomyocyte differentiation (GiWi)",
+    "doi": "10.1038/nprot.2012.150",
+    "protocol_sha256": "f05ba1e8005650e4035f3c3fab29f6ecb851d2a873854855d998f7d2da7efe4d",
+    "parameters": [
+      {
+        "name": "CHIR99021_uM",
+        "unit": "µM",
+        "low": 2,
+        "high": 12,
+        "value": 6,
+        "required": true,
+        "note": "Default is mid-window, not the paper's 12 µM example. Titrate. Lian et al. 2013."
+      },
+      {
+        "name": "IWP2_uM",
+        "unit": "µM",
+        "low": 2,
+        "high": 5,
+        "value": 5,
+        "required": true,
+        "note": "Lian et al. applied 5 µM IWP2 at differentiation day 3 for 48 h."
+      }
+    ],
+    "required_gates": {
+      "feed_72": [
+        "confluence"
+      ],
+      "beating": [
+        "beating"
+      ],
+      "endpoint": [
+        "cTnT"
+      ]
+    },
+    "required_step_reagents": {
+      "chir": [
+        "CHIR99021"
+      ],
+      "iwp": [
+        "IWP2"
+      ]
+    },
+    "exclusivity": [],
+    "max_hours_between_medium_changes": 50,
+    "allowed_actions": [
+      "coat",
+      "endpoint",
+      "medium_change",
+      "note",
+      "passage",
+      "qc",
+      "seed"
+    ],
+    "non_claims": [
+      "Research checklist only. Not for administration to humans.",
+      "Not a GMP batch record, not an IND section, and not a biosafety approval.",
+      "Line-to-line behavior is not guaranteed by a concentration that worked in the source paper.",
+      "Not a recipe for an allogeneic cardiomyocyte product."
+    ]
+  },
+  {
+    "schema_version": 1,
+    "protocol_id": "dual_smad_neural",
+    "title": "Adherent neural induction by dual SMAD inhibition",
+    "doi": "10.1038/nbt.1529",
+    "protocol_sha256": "9f153eae7e897968d58be08e740817a919a2401ae9e98209abc72a52a1362a50",
+    "parameters": [
+      {
+        "name": "SB431542_uM",
+        "unit": "µM",
+        "low": 5,
+        "high": 10,
+        "value": 10,
+        "required": true,
+        "note": "Chambers et al. 2009 used 10 µM."
+      },
+      {
+        "name": "Noggin_ng_per_mL",
+        "unit": "ng/mL",
+        "low": 100,
+        "high": 300,
+        "value": 200,
+        "required": true,
+        "note": "Chambers et al. 2009 used 200 ng/mL."
+      },
+      {
+        "name": "LDN193189_nM",
+        "unit": "nM",
+        "low": 0,
+        "high": 250,
+        "value": 0,
+        "required": true,
+        "note": "Leave at 0 to follow Chambers (Noggin). 100 nM is a later substitute for Noggin, not an addition to it."
+      }
+    ],
+    "required_gates": {
+      "seed": [
+        "morphology"
+      ],
+      "pax6_gate": [
+        "OCT4",
+        "PAX6"
+      ],
+      "passage_10": [
+        "morphology"
+      ],
+      "endpoint": [
+        "PAX6"
+      ]
+    },
+    "required_step_reagents": {
+      "induct_0": [
+        "SB431542",
+        "Noggin"
+      ],
+      "induct_1": [
+        "SB431542",
+        "Noggin"
+      ],
+      "induct_2": [
+        "SB431542",
+        "Noggin"
+      ],
+      "induct_4": [
+        "SB431542",
+        "Noggin"
+      ],
+      "induct_6": [
+        "SB431542",
+        "Noggin"
+      ],
+      "induct_8": [
+        "SB431542",
+        "Noggin"
+      ]
+    },
+    "exclusivity": [
+      {
+        "parameters": [
+          "Noggin_ng_per_mL",
+          "LDN193189_nM"
+        ],
+        "rule": "at_most_one_positive",
+        "minimum_positive": 1,
+        "inactive_values": {
+          "Noggin_ng_per_mL": 0,
+          "LDN193189_nM": 0
+        },
+        "rationale": "Noggin (Chambers et al. 2009) and LDN-193189 are substitutes for the same BMP-signal inhibition; the encoded dual-SMAD workflow never stacks them."
+      }
+    ],
+    "max_hours_between_medium_changes": 50,
+    "allowed_actions": [
+      "coat",
+      "endpoint",
+      "medium_change",
+      "note",
+      "passage",
+      "qc",
+      "seed"
+    ],
+    "non_claims": [
+      "Research checklist only. Not for administration to humans.",
+      "Not a GMP batch record, not an IND section, and not a biosafety approval.",
+      "Line-to-line behavior is not guaranteed by a concentration that worked in the source paper."
+    ]
+  }
+]

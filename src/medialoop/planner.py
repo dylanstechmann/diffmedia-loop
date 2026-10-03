@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
+from medialoop.constraints import enforce_constraints
 from medialoop.gp import expected_improvement, predict
 from medialoop.loop import inside_bounds
 from medialoop.space import NAMES
@@ -51,9 +52,19 @@ def _inputs(candidates_path, observations_path, pending_path):
                                         "observations": observations_hash, "pending": pending_hash}
 
 
-def propose(candidates_path, observations_path=None, pending_path=None, *, seed=0, noise=0.02, batch_size=1, batch_strategy="kriging_believer"):
-    """Preview candidate(s) without reserving or modifying input files."""
-    return _propose(*_inputs(candidates_path, observations_path, pending_path), seed=seed, noise=noise, batch_size=batch_size, batch_strategy=batch_strategy)
+def propose(candidates_path, observations_path=None, pending_path=None, *, seed=0, noise=0.02, batch_size=1, batch_strategy="kriging_believer", constraints_path=None):
+    """Preview candidate(s) without reserving or modifying input files.
+
+    When constraints_path names a constraint bundle exported by
+    cell-protocol-compiler, the candidate table is checked against those
+    published windows before a proposal is made; violations are errors.
+    """
+    rows, observations, pending, hashes = _inputs(candidates_path, observations_path, pending_path)
+    provenance = enforce_constraints(constraints_path, rows) if constraints_path else None
+    result = _propose(rows, observations, pending, hashes, seed=seed, noise=noise, batch_size=batch_size, batch_strategy=batch_strategy)
+    if provenance is not None:
+        result["constraints"] = provenance
+    return result
 
 
 def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(), batch_size=1, batch_strategy="kriging_believer"):
@@ -188,6 +199,7 @@ def main(argv=None):
     parser.add_argument("--candidates", required=True)
     parser.add_argument("--observations")
     parser.add_argument("--pending")
+    parser.add_argument("--constraints", help="constraint bundle exported by cell-protocol-compiler; candidates are checked against its published windows")
     parser.add_argument("--batch-size", type=int, default=1, help="number of candidates to propose in batch")
     parser.add_argument(
         "--batch-strategy",
@@ -210,10 +222,12 @@ def main(argv=None):
             from medialoop.reservations import propose_and_reserve
             result = propose_and_reserve(args.candidates, args.observations, args.pending,
                                          ledger_path=args.reserve_ledger, request_id=args.request_id,
-                                         seed=args.seed, noise=args.noise)
+                                         seed=args.seed, noise=args.noise,
+                                         constraints_path=args.constraints)
         else:
             result = propose(args.candidates, args.observations, args.pending, seed=args.seed, noise=args.noise,
-                             batch_size=args.batch_size, batch_strategy=args.batch_strategy)
+                             batch_size=args.batch_size, batch_strategy=args.batch_strategy,
+                             constraints_path=args.constraints)
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(result, indent=2, allow_nan=False) + "\n"

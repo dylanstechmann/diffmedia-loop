@@ -122,6 +122,48 @@ Preview mode can still display already-reserved conditions because it does not
 read the ledger. Store the ledger alongside its recovery journal files outside
 Git and use SQLite-aware backups while it is active.
 
+## Shared published-window constraints (v0.4)
+
+The published factor windows are not retyped here. `examples/planner-constraints.json`
+is a bundle exported by
+[cell-protocol-compiler](https://github.com/dylanstechmann/cell-protocol-compiler)
+(`protocolcompiler <id> --constraints`) for `giwi_cardiac` and `dual_smad_neural`,
+carrying each source record's `protocol_sha256`. Pass it to any planning run:
+
+```bash
+medialoop-plan --candidates examples/candidates-constrained.csv \
+  --observations examples/observations-constrained.csv \
+  --pending examples/pending-constrained.csv \
+  --constraints examples/planner-constraints.json \
+  --seed 0 --out artifacts/proposal.json
+```
+
+- `examples/candidates-constrained.csv` holds conditions inside the
+  exported windows; the older `candidates.csv` zero-dose synthetic fixtures
+  are deliberately rejected by this flag.
+- Every candidate factor column named in the bundle is checked against its
+  published window; a value outside it is an error, not a clip. The
+  simulation box may be wider than a published window (it includes
+  zero-dose corners), so this catches conditions the box alone would allow.
+- Mutually exclusive alternatives are enforced as data: a candidate with
+  both `Noggin_ng_per_mL` and `LDN193189_nM` positive is rejected, matching
+  the compiler's dual-SMAD rule, and at least one must be positive. Required
+  parameter columns must be present; an omitted alternative no longer bypasses
+  validation. Zero is an explicit inactive value for either alternative.
+- Proposals record the bundle's SHA-256 and the source protocol hashes under
+  `constraints`, so any result names the exact windows that bounded its
+  search. The SQLite reservation path enforces the same bundle.
+- The unit suite loads the checked-in bundle and compares it with the
+  built-in box: no simulation factor may lack a published window, and no
+  published window may exceed the box. Regenerate the bundle after any
+  window changes in the compiler; the sync test fails first.
+
+The bundle states limits a search may use. It is not an optimum, and it is
+not a dose for a person or a cell line you have not tested.
+The checker validates factor fields only. It does not validate culture timing,
+cell-line suitability, required QC gates, or the full protocol narrative. The
+bundled cartoon axes do not describe a combined wet-lab protocol.
+
 ## Acquisition bake-off (v0.3)
 
 `medialoop-bakeoff` compares the current planner (expected improvement) with
@@ -141,3 +183,9 @@ It is not a dose, and it is not a reason to plate a well. A neural policy is
 intentionally absent: a course project can add one behind the same regret
 and violation columns without replacing the expected-improvement baseline.
 
+Two shifted objectives, `--objective cardiac_shifted` and `neural_shifted`,
+move the cartoon peak to a different on-grid location (6/2 µM CHIR/IWP2 and
+5 µM / 250 nM SB431542/LDN). They check that the planner follows the surface
+rather than the original peak's location. `--noise` sets the readout noise
+scale and is reported as `readout_noise`; the previous fixed 0.02 remains the
+default.

@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 import sqlite3
 
+from medialoop.constraints import enforce_constraints
 from medialoop.planner import _read, _propose
 from medialoop.space import NAMES
 
 
 def propose_and_reserve(candidates_path, observations_path=None, pending_path=None, *,
-                        ledger_path, request_id, seed=0, noise=0.02):
+                        ledger_path, request_id, seed=0, noise=0.02, constraints_path=None):
     """Reserve before returning; retry a request ID to retrieve its saved result.
 
     All cooperating callers must use the same local SQLite file. Reservations
@@ -35,6 +36,7 @@ def propose_and_reserve(candidates_path, observations_path=None, pending_path=No
                            "request_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL UNIQUE, "
                            "configuration TEXT NOT NULL, proposal TEXT NOT NULL)")
         rows, candidate_hash = _read(candidates_path, ["candidate_id", *NAMES])
+        constraints_provenance = enforce_constraints(constraints_path, rows) if constraints_path else None
         bound = connection.execute("SELECT value FROM metadata WHERE key='candidates_sha256'").fetchone()
         if bound is not None and bound[0] != candidate_hash:
             raise ValueError("candidate table differs from this ledger; keep its original candidate table")
@@ -51,6 +53,8 @@ def propose_and_reserve(candidates_path, observations_path=None, pending_path=No
             hashes = {"candidates": candidate_hash, "observations": observations_hash, "pending": pending_hash}
             reserved = [row[0] for row in connection.execute("SELECT candidate_id FROM reservations")]
             result = _propose(rows, observations, pending, hashes, seed=seed, noise=noise, reserved_ids=reserved)
+            if constraints_provenance is not None:
+                result["constraints"] = constraints_provenance
             result["reservation"] = {"request_id": request_id, "candidates_sha256": candidate_hash}
             result["note"] = ("Maximizes the supplied response. A proposal is not an executable protocol. "
                               "Reserved in the ledger; reuse this request ID to recover the original proposal.")

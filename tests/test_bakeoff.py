@@ -1,8 +1,11 @@
+import io
+import json
 import unittest
+from unittest.mock import patch
 
-from medialoop.bakeoff import POLICIES, campaign, candidate_grid
+from medialoop.bakeoff import POLICIES, campaign, candidate_grid, main as bakeoff_main
 from medialoop.loop import inside_bounds
-from medialoop.surfaces import cardiac
+from medialoop.surfaces import OBJECTIVES, cardiac, cardiac_shifted, neural_shifted
 
 
 class BakeoffTests(unittest.TestCase):
@@ -33,6 +36,53 @@ class BakeoffTests(unittest.TestCase):
         self.assertNotIn("dqn", POLICIES)
         with self.assertRaises(ValueError):
             campaign(cardiac, "dqn", seed=0)
+
+    def test_shifted_objectives_move_the_peak_and_stay_on_the_grid(self):
+        grid = candidate_grid()
+        self.assertTrue(inside_bounds(grid))
+        points = {tuple(row) for row in grid.tolist()}
+        # The shifted peaks are deliberately on the lattice so regret stays
+        # interpretable, and they are not the original cartoon peaks.
+        self.assertIn((6.0, 2.0, 0.0, 0.0), points)
+        self.assertIn((0.0, 0.0, 5.0, 250.0), points)
+        self.assertAlmostEqual(
+            cardiac_shifted({"CHIR99021_uM": 6.0, "IWP2_uM": 2.0,
+                             "SB431542_uM": 0.0, "LDN193189_nM": 0.0}), 1.0
+        )
+        self.assertAlmostEqual(
+            neural_shifted({"CHIR99021_uM": 0.0, "IWP2_uM": 0.0,
+                            "SB431542_uM": 5.0, "LDN193189_nM": 250.0}), 1.0
+        )
+        # The shifted surfaces are genuinely different functions.
+        self.assertNotAlmostEqual(
+            cardiac_shifted({"CHIR99021_uM": 8.0, "IWP2_uM": 4.0,
+                             "SB431542_uM": 0.0, "LDN193189_nM": 0.0}),
+            cardiac({"CHIR99021_uM": 8.0, "IWP2_uM": 4.0,
+                     "SB431542_uM": 0.0, "LDN193189_nM": 0.0}),
+        )
+        self.assertIn("cardiac_shifted", OBJECTIVES)
+        self.assertIn("neural_shifted", OBJECTIVES)
+
+    def test_expected_improvement_follows_a_shifted_surface(self):
+        ei = [campaign(cardiac_shifted, "expected_improvement", seed=s,
+                       rounds=5, batch_size=2)["final_simple_regret"] for s in range(6)]
+        rnd = [campaign(cardiac_shifted, "random", seed=s,
+                        rounds=5, batch_size=2)["final_simple_regret"] for s in range(6)]
+        self.assertLess(sum(ei) / len(ei), sum(rnd) / len(rnd) - 0.05)
+
+    def test_noise_is_reported_and_invalid_noise_is_rejected(self):
+        result = campaign(cardiac, "expected_improvement", seed=0, noise=0.5)
+        self.assertAlmostEqual(result["best_true"], result["best_true"])  # smoke
+        summary = None
+        with patch("sys.stdout", io.StringIO()) as buffer:
+            self.assertEqual(
+                bakeoff_main(["--objective", "cardiac", "--seeds", "2", "--noise", "0.5"]),
+                0,
+            )
+            summary = json.loads(buffer.getvalue())
+        self.assertEqual(summary["readout_noise"], 0.5)
+        with self.assertRaisesRegex(ValueError, "nonnegative"):
+            campaign(cardiac, "expected_improvement", seed=0, noise=-0.1)
 
 
 if __name__ == "__main__":

@@ -155,6 +155,7 @@ def summarize(objective: str, seeds: int, **kwargs) -> dict:
         "objective": objective,
         "seeds": seeds,
         "grid_size": int(len(candidate_grid())),
+        "readout_noise": float(kwargs.get("noise", 0.02)),
         "policies": by_policy,
         "current_planner": "expected_improvement",
         "note": (
@@ -172,11 +173,14 @@ def main(argv=None) -> int:
     parser.add_argument("--rounds", type=int, default=4)
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--init", type=int, default=4)
+    parser.add_argument("--noise", type=float, default=0.02,
+                        help="readout noise scale added to the synthetic objective")
     args = parser.parse_args(argv)
     if args.seeds < 1:
         parser.error("seeds must be positive")
     json.dump(
-        summarize(args.objective, args.seeds, n_init=args.init, rounds=args.rounds, batch_size=args.batch),
+        summarize(args.objective, args.seeds, n_init=args.init, rounds=args.rounds,
+                  batch_size=args.batch, noise=args.noise),
         sys.stdout,
         indent=2,
     )
