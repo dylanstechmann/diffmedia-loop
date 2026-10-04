@@ -74,10 +74,16 @@ def _candidate_ids(path):
 
 def aggregate_measurements(candidates_path, measurements_path, *, direction):
     """Return one explicit-direction response per measured condition plus audit data."""
+    observations, report, _ = _aggregate_measurements(
+        candidates_path, measurements_path, direction=direction)
+    return observations, report
+
+
+def _aggregate_measurements(candidates_path, measurements_path, *, direction):
     if direction not in {"maximize", "minimize"}:
         raise ValueError("direction must be 'maximize' or 'minimize'")
-    candidates, _, candidate_hash = _candidate_ids(candidates_path)
-    rows, _, measurement_hash = _read_csv_snapshot(
+    candidates, candidate_bytes, candidate_hash = _candidate_ids(candidates_path)
+    rows, measurement_bytes, measurement_hash = _read_csv_snapshot(
         measurements_path, MEASUREMENT_COLUMNS
     )
     if not rows:
@@ -245,7 +251,7 @@ def aggregate_measurements(candidates_path, measurements_path, *, direction):
             reasons[reason] = reasons.get(reason, 0) + 1
     for candidate_id in candidates:
         condition_summary[candidate_id]["failed_reasons"] = failed_by_reason.get(candidate_id, {})
-    return aggregate_rows, {
+    report = {
         "schema_version": 1,
         "source_measurements_sha256": measurement_hash,
         "source_candidates_sha256": candidate_hash,
@@ -275,6 +281,10 @@ def aggregate_measurements(candidates_path, measurements_path, *, direction):
         ],
     }
 
+    snapshots = {"source_candidates.csv": candidate_bytes,
+                 "source_measurements.csv": measurement_bytes}
+    return aggregate_rows, report, snapshots
+
 
 def _render_observations(rows):
     columns = [
@@ -295,9 +305,13 @@ def _render_observations(rows):
 
 
 def import_to_directory(candidates_path, measurements_path, output_dir, *, direction):
-    observations, report = aggregate_measurements(
+    observations, report, snapshots = _aggregate_measurements(
         candidates_path, measurements_path, direction=direction
     )
+    report["source_snapshots"] = {
+        name: {"sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data)}
+        for name, data in snapshots.items()
+    }
     observations_text = _render_observations(observations)
     observation_bytes = observations_text.encode("utf-8")
     report["aggregated_observations_sha256"] = hashlib.sha256(observation_bytes).hexdigest()
@@ -309,11 +323,13 @@ def import_to_directory(candidates_path, measurements_path, output_dir, *, direc
     output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
         staged = Path(temporary)
+        for name, data in snapshots.items():
+            (staged / name).write_bytes(data)
         (staged / "observations.csv").write_bytes(observation_bytes)
         (staged / "measurement_report.json").write_text(report_text, encoding="utf-8")
         output.mkdir()
         try:
-            for name in ("observations.csv", "measurement_report.json"):
+            for name in (*snapshots, "observations.csv", "measurement_report.json"):
                 (staged / name).rename(output / name)
         except BaseException:
             shutil.rmtree(output)

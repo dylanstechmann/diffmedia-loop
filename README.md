@@ -235,3 +235,11 @@ move the cartoon peak to a different on-grid location (6/2 µM CHIR/IWP2 and
 rather than the original peak's location. `--noise` sets the readout noise
 scale and is reported as `readout_noise`; the previous fixed 0.02 remains the
 default.
+
+
+Measurement imports now retain `source_candidates.csv` and
+`source_measurements.csv` as the exact byte snapshots that were parsed, including
+failed wells. Their hashes and byte counts travel in the aggregation report.
+The planner verifies these snapshots for new imports, so changed or missing raw
+inputs cannot silently retain an apparently intact provenance trail. Existing
+reports without the additive snapshot metadata remain readable.

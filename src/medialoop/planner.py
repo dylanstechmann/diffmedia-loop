@@ -75,6 +75,24 @@ def _sibling_import_report(observations_path):
         raise ValueError("planner could not read the sibling measurement_report.json") from exc
     if not isinstance(report, dict):
         raise ValueError("sibling measurement_report.json must be a JSON object")
+    snapshots = report.get("source_snapshots")
+    if "source_snapshots" in report:
+        names = {"source_candidates.csv": "source_candidates_sha256",
+                 "source_measurements.csv": "source_measurements_sha256"}
+        if not isinstance(snapshots, dict) or set(snapshots) != set(names):
+            raise ValueError("measurement source snapshots require both source tables")
+        for name, digest_field in names.items():
+            metadata = snapshots[name]
+            path = report_path.with_name(name)
+            try:
+                raw = path.read_bytes()
+            except OSError as exc:
+                raise ValueError(f"missing measurement source snapshot: {name}") from exc
+            digest = hashlib.sha256(raw).hexdigest()
+            if (not isinstance(metadata, dict) or digest != metadata.get("sha256")
+                    or len(raw) != metadata.get("size_bytes")
+                    or digest != report.get(digest_field)):
+                raise ValueError(f"measurement source snapshot integrity failed: {name}")
     return report
 
 

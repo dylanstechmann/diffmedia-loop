@@ -64,7 +64,8 @@ class MeasurementImportTests(unittest.TestCase):
         return out / "observations.csv"
 
     def rewrite_observations(self, path, mutate_rows):
-        rows = list(csv.DictReader(path.open(newline="")))
+        with path.open(newline="") as handle:
+            rows = list(csv.DictReader(handle))
         mutate_rows(rows)
         with path.open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=rows[0].keys(), lineterminator="\n")
@@ -215,6 +216,46 @@ class MeasurementImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "nonblank, unique candidate_id"):
             aggregate_measurements(self.candidates, self.measurements, direction="maximize")
 
+    def test_import_retains_exact_parsed_sources_even_if_originals_change(self):
+        from unittest.mock import patch
+        import medialoop.measurement_import as importer
+        self.write_measurements(self.default_rows())
+        originals = {"source_candidates.csv": self.candidates.read_bytes(),
+                     "source_measurements.csv": self.measurements.read_bytes()}
+        render = importer._render_observations
+        def replace_originals(rows):
+            self.candidates.write_text("changed")
+            self.measurements.write_text("changed")
+            return render(rows)
+        out = self.root / "snapshot-import"
+        with patch.object(importer, "_render_observations", side_effect=replace_originals):
+            report = import_to_directory(self.candidates, self.measurements, out, direction="maximize")
+        for name, raw in originals.items():
+            self.assertEqual((out / name).read_bytes(), raw)
+            self.assertEqual(report["source_snapshots"][name]["sha256"],
+                             hashlib.sha256(raw).hexdigest())
+
+    def test_planner_rejects_changed_or_missing_raw_source_snapshot(self):
+        observations = self.import_observations()
+        source = observations.with_name("source_measurements.csv")
+        raw = source.read_bytes()
+        source.write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "source snapshot integrity failed"):
+            propose(self.candidates, observations)
+        source.write_bytes(raw)
+        source.unlink()
+        with self.assertRaisesRegex(ValueError, "missing measurement source snapshot"):
+            propose(self.candidates, observations)
+
+    def test_explicit_null_source_snapshot_metadata_is_not_legacy(self):
+        observations = self.import_observations()
+        path = observations.with_name("measurement_report.json")
+        report = json.loads(path.read_text())
+        report["source_snapshots"] = None
+        path.write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, "source snapshots require both"):
+            propose(self.candidates, observations)
+
     def test_import_to_directory_writes_provenance_and_refuses_overwrite(self):
         self.write_measurements(self.default_rows())
         out = self.root / "imported"
@@ -261,7 +302,8 @@ class MeasurementImportTests(unittest.TestCase):
             failed_row("c", "p1", "C01", "u4", "t1", "reader interruption")
         ]
         observations = self.import_observations(name="failed-condition", rows=rows)
-        self.assertNotIn("c", {row["candidate_id"] for row in csv.DictReader(observations.open(newline=""))})
+        with observations.open(newline="") as handle:
+            self.assertNotIn("c", {row["candidate_id"] for row in csv.DictReader(handle)})
         proposal = propose(self.candidates, observations)
         self.assertEqual(proposal["measurement_context"]["conditions"]["a"]["n_biological_units"], 2)
 
