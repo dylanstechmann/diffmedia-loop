@@ -18,6 +18,7 @@ dependencies = [
 medialoop = "medialoop.cli:main"
 medialoop-plan = "medialoop.planner:main"
 medialoop-bakeoff = "medialoop.bakeoff:main"
+medialoop-import-measurements = "medialoop.measurement_import:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

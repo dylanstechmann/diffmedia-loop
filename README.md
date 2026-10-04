@@ -76,6 +76,52 @@ exhausted candidate set are rejected. Output files are created exclusively.
 `--noise` is an assumed response standard deviation, not an estimated noise
 model. The fixed GP is a baseline and its uncertainty is not calibrated on cells.
 
+### Import well-level assay measurements
+
+Use `medialoop-import-measurements` to validate a raw well table and produce a
+planner-compatible mean table plus an audit report. It does not call the
+synthetic surface or treat a proposed candidate as an executable protocol.
+
+```bash
+medialoop-import-measurements \
+  --candidates examples/candidates.csv \
+  --measurements examples/measurements.example.csv \
+  --direction maximize \
+  --out-dir artifacts/measurement-import
+
+medialoop-plan --candidates examples/candidates.csv \
+  --observations artifacts/measurement-import/observations.csv \
+  --noise 0.05 --out artifacts/proposal.json
+```
+
+The checked-in measurement file is an explicitly synthetic format example.
+Raw tables require `candidate_id`, `plate_id`, `well_id`, `batch_id`,
+`biological_unit_id`, `technical_replicate_id`, `assay_id`, `endpoint`, `unit`,
+`value`, `well_measurement_standard_uncertainty`, `status`, and `failure_reason`.
+Each import accepts exactly one assay ID, endpoint, and unit. Measured rows need
+a finite value and blank failure reason. Failed rows need a reason and blank
+value; they remain in `measurement_report.json` and are not imputed. The
+well-level standard uncertainty is either supplied for every measured well in
+the import or left blank for all of them. When supplied, the importer propagates
+it through technical and biological means under an independence assumption;
+shared calibration uncertainty is not included.
+
+Technical replicates are averaged within each `biological_unit_id`, then
+biological units receive equal weight. The report keeps biological-unit SD/SEM
+separate from the propagated assay measurement uncertainty. Set `--direction`
+to the endpoint's predeclared objective: the planner maximizes a `maximize`
+value as recorded and negates a `minimize` value, with both raw mean and
+transform recorded. Use a separate import for each endpoint; this planner does
+not define a combined rejuvenation score.
+
+The proposal carries the assay, endpoint, units, raw-measurement hash, candidate
+hash, aggregation rule, failed-well counts, replicate summaries, and imported
+uncertainty. These data are provenance and are **not used by the current GP**:
+it still assumes the `--noise` common response scale and does not model
+per-condition uncertainty, reused biological units across conditions, batch
+effects, or assay covariance. A reported SEM is not a calibrated GP noise value.
+Review those limits before using proposals to plan another experiment.
+
 ## Reserve a candidate atomically
 
 Use one shared **local** SQLite ledger for all callers that need reservations:

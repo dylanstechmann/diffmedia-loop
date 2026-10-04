@@ -52,7 +52,7 @@ def propose_and_reserve(candidates_path, observations_path=None, pending_path=No
             pending, pending_hash = _read(pending_path, ["candidate_id"]) if pending_path else ([], None)
             hashes = {"candidates": candidate_hash, "observations": observations_hash, "pending": pending_hash}
             reserved = [row[0] for row in connection.execute("SELECT candidate_id FROM reservations")]
-            result = _propose(rows, observations, pending, hashes, seed=seed, noise=noise, reserved_ids=reserved)
+            result = _propose(rows, observations, pending, hashes, seed=seed, noise=noise, reserved_ids=reserved, observations_path=observations_path)
             if constraints_provenance is not None:
                 result["constraints"] = constraints_provenance
             result["reservation"] = {"request_id": request_id, "candidates_sha256": candidate_hash}

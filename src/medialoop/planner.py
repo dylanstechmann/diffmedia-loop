@@ -52,6 +52,204 @@ def _inputs(candidates_path, observations_path, pending_path):
                                         "observations": observations_hash, "pending": pending_hash}
 
 
+_REPORT_FIELDS = (
+    "assay_id", "endpoint", "unit", "objective_direction", "response_transform",
+    "assay_measurement_uncertainty_status", "aggregation_method",
+    "shared_biological_units_across_conditions", "source_measurements_sha256",
+    "source_candidates_sha256",
+)
+
+
+def _sibling_import_report(observations_path):
+    """Read the measurement-report.json published beside an imported observations CSV."""
+    if observations_path is None:
+        return None
+    report_path = Path(observations_path).with_name("measurement_report.json")
+    if not report_path.exists():
+        raise ValueError(
+            "measurement-import observations require their sibling measurement_report.json"
+        )
+    try:
+        report = json.loads(report_path.read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("planner could not read the sibling measurement_report.json") from exc
+    if not isinstance(report, dict):
+        raise ValueError("sibling measurement_report.json must be a JSON object")
+    return report
+
+
+def _disagree(field, extra=""):
+    raise ValueError(
+        f"planner observations disagree on {field} with measurement_report.json{extra}; "
+        "the observations table may have been edited independently of its source records"
+    )
+
+
+def _cross_check_import_report_fields(observations_path, first):
+    """Fail when observation metadata no longer matches its sibling report."""
+    report = _sibling_import_report(observations_path)
+    if report is None:
+        return
+    for field in _REPORT_FIELDS:
+        if field not in report:
+            continue
+        row_value = first[field]
+        if row_value in ("true", "false") and isinstance(report[field], bool):
+            row_value = row_value == "true"
+        if report[field] != row_value:
+            _disagree(field)
+
+
+def _cross_check_import_report_totals(observations_path, observations, by_candidate, hashes):
+    """Fail when observation counts or bytes no longer match its sibling report."""
+    report = _sibling_import_report(observations_path)
+    if report is None:
+        return
+    conditions = report.get("conditions")
+    if isinstance(conditions, dict):
+        for field in ("n_measured_wells", "n_failed_wells"):
+            if field in report:
+                total = sum(int(value.get(field, 0)) for value in conditions.values()
+                            if isinstance(value, dict))
+                if report[field] != total:
+                    _disagree(field)
+        for candidate_id, parsed in by_candidate.items():
+            declared = conditions.get(candidate_id)
+            if not isinstance(declared, dict):
+                continue
+            for field in ("n_measured_wells", "n_failed_wells"):
+                if field in declared and declared[field] != parsed[field]:
+                    _disagree(field, f" for {candidate_id}")
+            if "n_biological_units_measured" in declared and declared["n_biological_units_measured"] != parsed["n_biological_units"]:
+                _disagree("n_biological_units_measured", f" for {candidate_id}")
+    declared_digest = report.get("aggregated_observations_sha256")
+    if isinstance(declared_digest, str) and declared_digest:
+        if hashes.get("observations") != declared_digest:
+            raise ValueError(
+                "planner observation bytes do not match the sibling measurement_report.json "
+                "aggregated_observations_sha256; the observations table may have been edited "
+                "independently of its source records"
+            )
+
+
+def _measurement_context(observations, hashes, observations_path=None):
+    if not observations or "measurement_schema_version" not in observations[0]:
+        return None
+    required = {
+        "candidate_id", "response", "raw_endpoint_mean", "measurement_schema_version",
+        "assay_id", "endpoint", "unit", "objective_direction", "response_transform",
+        "assay_measurement_uncertainty_status", "n_biological_units", "n_measured_wells", "n_failed_wells",
+        "biological_unit_mean_sd", "biological_unit_mean_sem",
+        "assay_measurement_standard_uncertainty_of_mean",
+        "shared_biological_units_across_conditions", "aggregation_method",
+        "source_measurements_sha256", "source_candidates_sha256",
+    }
+    for row in observations:
+        if not required.issubset(row):
+            raise ValueError("measurement-import observations are missing required metadata columns")
+        if row["measurement_schema_version"] != "1":
+            raise ValueError("unsupported measurement-import schema version")
+
+    common_fields = (
+        "assay_id", "endpoint", "unit", "objective_direction", "response_transform",
+        "assay_measurement_uncertainty_status",
+        "shared_biological_units_across_conditions", "aggregation_method",
+        "source_measurements_sha256", "source_candidates_sha256",
+    )
+    for field in common_fields:
+        values = {row[field] for row in observations}
+        if len(values) != 1 or not next(iter(values)):
+            raise ValueError(f"measurement-import observations disagree on {field}")
+    first = observations[0]
+    direction = first["objective_direction"]
+    expected_transform = "identity" if direction == "maximize" else "negated" if direction == "minimize" else None
+    if expected_transform is None or first["response_transform"] != expected_transform:
+        raise ValueError("measurement-import objective direction and response transform disagree")
+    if first["shared_biological_units_across_conditions"] not in {"true", "false"}:
+        raise ValueError("shared_biological_units_across_conditions must be true or false")
+    digest_fields = ("source_measurements_sha256", "source_candidates_sha256")
+    for field in digest_fields:
+        digest = first[field]
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
+            raise ValueError(f"measurement-import {field} must be a SHA-256 digest")
+    if first["source_candidates_sha256"] != hashes["candidates"]:
+        raise ValueError("measurement-import rows were created for a different candidate table")
+    _cross_check_import_report_fields(observations_path, first)
+
+    by_candidate = {}
+    for row in observations:
+        try:
+            response = float(row["response"])
+            raw_mean = float(row["raw_endpoint_mean"])
+            n_units = int(row["n_biological_units"])
+            n_measured = int(row["n_measured_wells"])
+            n_failed = int(row["n_failed_wells"])
+        except ValueError as exc:
+            raise ValueError("measurement-import summaries need numeric means and replicate counts") from exc
+        if not np.isfinite([response, raw_mean]).all() or n_units < 1 or n_measured < n_units or n_failed < 0:
+            raise ValueError("measurement-import summaries contain invalid means or replicate counts")
+        expected_response = raw_mean if direction == "maximize" else -raw_mean
+        if not np.isclose(response, expected_response, rtol=1e-12, atol=1e-15):
+            raise ValueError("planner response does not match the declared endpoint direction")
+        sd_text = row["biological_unit_mean_sd"]
+        sem_text = row["biological_unit_mean_sem"]
+        if n_units < 2:
+            if sd_text or sem_text:
+                raise ValueError("biological-unit SD/SEM must be blank with fewer than two units")
+            sd = sem = None
+        else:
+            try:
+                sd = float(sd_text)
+                sem = float(sem_text)
+            except ValueError as exc:
+                raise ValueError("biological-unit SD/SEM must be numeric when at least two units exist") from exc
+            if (not np.isfinite([sd, sem]).all() or sd < 0 or sem < 0
+                    or not np.isclose(sem, sd / np.sqrt(n_units), rtol=1e-9, atol=1e-12)):
+                raise ValueError("biological-unit SEM must equal SD divided by sqrt(n_units)")
+        assay_u_text = row["assay_measurement_standard_uncertainty_of_mean"]
+        if first["assay_measurement_uncertainty_status"] == "measured":
+            try:
+                assay_u = float(assay_u_text)
+            except ValueError as exc:
+                raise ValueError("measured assay uncertainty needs a numeric mean uncertainty") from exc
+            if not np.isfinite(assay_u) or assay_u < 0:
+                raise ValueError("assay measurement standard uncertainty must be finite and nonnegative")
+        elif first["assay_measurement_uncertainty_status"] == "not_available":
+            if assay_u_text:
+                raise ValueError("assay uncertainty must be blank when marked not_available")
+            assay_u = None
+        else:
+            raise ValueError("assay_measurement_uncertainty_status must be measured or not_available")
+        by_candidate[row["candidate_id"]] = {
+            "n_biological_units": n_units,
+            "n_measured_wells": n_measured,
+            "n_failed_wells": n_failed,
+            "biological_unit_mean_sd": sd,
+            "biological_unit_mean_sem": sem,
+            "assay_measurement_standard_uncertainty_of_mean": assay_u,
+        }
+    _cross_check_import_report_totals(observations_path, observations, by_candidate, hashes)
+    return {
+        "schema_version": 1,
+        "assay_id": first["assay_id"],
+        "endpoint": first["endpoint"],
+        "unit": first["unit"],
+        "objective_direction": direction,
+        "response_transform": first["response_transform"],
+        "assay_measurement_uncertainty_status": first["assay_measurement_uncertainty_status"],
+        "aggregation_method": first["aggregation_method"],
+        "source_measurements_sha256": first["source_measurements_sha256"],
+        "source_candidates_sha256": first["source_candidates_sha256"],
+        "aggregated_observations_sha256": hashes["observations"],
+        "shared_biological_units_across_conditions": first["shared_biological_units_across_conditions"] == "true",
+        "conditions": by_candidate,
+        "note": (
+            "The fixed-noise GP maximizes this one endpoint. It does not use per-condition biological SEM "
+            "or model batch/shared-unit covariance. Set --noise explicitly for the planner."
+        ),
+    }
+
+
 def propose(candidates_path, observations_path=None, pending_path=None, *, seed=0, noise=0.02, batch_size=1, batch_strategy="kriging_believer", constraints_path=None):
     """Preview candidate(s) without reserving or modifying input files.
 
@@ -61,13 +259,13 @@ def propose(candidates_path, observations_path=None, pending_path=None, *, seed=
     """
     rows, observations, pending, hashes = _inputs(candidates_path, observations_path, pending_path)
     provenance = enforce_constraints(constraints_path, rows) if constraints_path else None
-    result = _propose(rows, observations, pending, hashes, seed=seed, noise=noise, batch_size=batch_size, batch_strategy=batch_strategy)
+    result = _propose(rows, observations, pending, hashes, seed=seed, noise=noise, batch_size=batch_size, batch_strategy=batch_strategy, observations_path=observations_path)
     if provenance is not None:
         result["constraints"] = provenance
     return result
 
 
-def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(), batch_size=1, batch_strategy="kriging_believer"):
+def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(), batch_size=1, batch_strategy="kriging_believer", observations_path=None):
     if not np.isfinite(noise) or noise < 0:
         raise ValueError("noise must be finite and nonnegative")
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
@@ -91,6 +289,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
     y = np.array([float(row["response"]) for row in observations])
     if not np.isfinite(y).all():
         raise ValueError("responses must be finite")
+    measurement_context = _measurement_context(observations, hashes, observations_path)
     available = [i for i, name in enumerate(ids) if name not in observed_ids | pending_ids]
     if not available:
         raise ValueError("no unevaluated, nonpending candidates remain")
@@ -118,11 +317,14 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
             chosen = available[local]
             mu, sigma, acquisition = float(means[local]), float(stds[local]), float(ei[local])
             method = "expected_improvement"
-        return {"schema_version": 1, "candidate_id": ids[chosen], "factors": dict(zip(NAMES, x[chosen].tolist())),
-                "method": method, "predicted_mean": mu, "predicted_std": sigma,
-                "expected_improvement": acquisition, "seed": seed, "noise": noise,
-                "n_observed": len(observations), "n_pending": len(pending_ids), "input_sha256": hashes,
-                "note": "Maximizes the supplied response. A proposal is not an executable protocol. Record it as pending before asking again."}
+        result = {"schema_version": 1, "candidate_id": ids[chosen], "factors": dict(zip(NAMES, x[chosen].tolist())),
+                  "method": method, "predicted_mean": mu, "predicted_std": sigma,
+                  "expected_improvement": acquisition, "seed": seed, "noise": noise,
+                  "n_observed": len(observations), "n_pending": len(pending_ids), "input_sha256": hashes,
+                  "note": "Maximizes the supplied response. A proposal is not an executable protocol. Record it as pending before asking again."}
+        if measurement_context is not None:
+            result["measurement_context"] = measurement_context
+        return result
 
     # Batch acquisition (batch_size > 1) via Kriging Believer or Constant Liar
     cur_measured = [lookup[row["candidate_id"]] for row in observations]
@@ -172,7 +374,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
             cur_x = np.vstack([cur_x, pick_x]) if len(cur_x) else pick_x
             cur_y = np.append(cur_y, imputed_y)
 
-    return {
+    result = {
         "schema_version": 1,
         "batch_size": batch_size,
         "batch_strategy": batch_strategy if model_ready else "random_initialization_no_model",
@@ -192,6 +394,9 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
         "note": ("Batch uses a GP acquisition with explicit fantasy values; fantasies are not observed readouts. Record proposals as pending before asking again."
                  if model_ready else "Insufficient observed readouts for a GP fit; every batch member was selected by seeded random initialization."),
     }
+    if measurement_context is not None:
+        result["measurement_context"] = measurement_context
+    return result
 
 
 def main(argv=None):

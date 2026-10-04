@@ -1,0 +1,9 @@
+candidate_id,plate_id,well_id,batch_id,biological_unit_id,technical_replicate_id,assay_id,endpoint,unit,value,well_measurement_standard_uncertainty,status,failure_reason
+synthetic-a,synthetic-plate-01,A01,synthetic-batch-01,synthetic-unit-01,tech-01,SYNTHETIC-ASSAY-01,illustrative_endpoint,fraction,0.20,0.01,measured,
+synthetic-a,synthetic-plate-01,A02,synthetic-batch-01,synthetic-unit-01,tech-02,SYNTHETIC-ASSAY-01,illustrative_endpoint,fraction,0.22,0.01,measured,
+synthetic-a,synthetic-plate-01,A03,synthetic-batch-01,synthetic-unit-02,tech-01,SYNTHETIC-ASSAY-01,illustrative_endpoint,fraction,0.18,0.01,measured,
+synthetic-a,synthetic-plate-01,A04,synthetic-batch-01,synthetic-unit-02,tech-02,SYNTHETIC-ASSAY-01,illustrative_endpoint,fraction,0.21,0.01,measured,
+synthetic-b,synthetic-plate-01,B01,synthetic-batch-01,synthetic-unit-01,tech-01,SYNTHETIC-ASSAY-01,illustrative_endpoint,fraction,0.31,0.01,measured,
+synthetic-b,synthetic-plate-01,B02,synthetic-batch-01,synthetic-unit-01,tech-02,SYNTHETIC-ASSAY-01,illustrative_endpoint,fraction,0.29,0.01,measured,
+synthetic-b,synthetic-plate-01,B03,synthetic-batch-01,synthetic-unit-02,tech-01,SYNTHETIC-ASSAY-01,illustrative_endpoint,fraction,0.27,0.01,measured,
+synthetic-b,synthetic-plate-01,B04,synthetic-batch-01,synthetic-unit-02,tech-02,SYNTHETIC-ASSAY-01,illustrative_endpoint,fraction,,,failed,synthetic reader interruption
