@@ -1,7 +1,9 @@
 """Propose from a collaborator-supplied candidate list with an explicit ledger.
 
 No surface oracle is called. Readouts and pending IDs come from the user.
-The GP maximizes the supplied response and assumes a common noise scale.
+The GP maximizes the supplied response and can use imported assay measurement
+uncertainty per observation; biological SEM and shared-unit covariance remain
+outside the model.
 """
 
 from __future__ import annotations
@@ -262,8 +264,9 @@ def _measurement_context(observations, hashes, observations_path=None):
         "shared_biological_units_across_conditions": first["shared_biological_units_across_conditions"] == "true",
         "conditions": by_candidate,
         "note": (
-            "The fixed-noise GP maximizes this one endpoint. It does not use per-condition biological SEM "
-            "or model batch/shared-unit covariance. Set --noise explicitly for the planner."
+            "The GP maximizes this one endpoint. When imported assay measurement uncertainty is measured, "
+            "the observation noise is max(--noise, assay uncertainty). Biological-unit SEM and batch/shared-unit "
+            "covariance are not modeled. --noise remains the fallback and minimum noise floor."
         ),
     }
 
@@ -308,6 +311,23 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
     if not np.isfinite(y).all():
         raise ValueError("responses must be finite")
     measurement_context = _measurement_context(observations, hashes, observations_path)
+    observation_noise = np.full(len(observations), float(noise))
+    if measurement_context is not None and measurement_context["assay_measurement_uncertainty_status"] == "measured":
+        for index, row in enumerate(observations):
+            assay_u = measurement_context["conditions"][row["candidate_id"]]["assay_measurement_standard_uncertainty_of_mean"]
+            observation_noise[index] = max(float(noise), assay_u)
+    gp_noise = {
+        "policy": "max_assumed_noise_floor_and_imported_assay_measurement_uncertainty" if measurement_context and measurement_context["assay_measurement_uncertainty_status"] == "measured" else "assumed_noise_floor",
+        "assumed_noise_floor": float(noise),
+        "effective_observation_standard_deviation": {
+            row["candidate_id"]: float(observation_noise[index]) for index, row in enumerate(observations)
+        },
+        "unit": measurement_context["unit"] if measurement_context else "response units",
+        "biological_unit_sem_used": False,
+        "shared_unit_or_batch_covariance_modeled": False,
+    }
+    if measurement_context is not None:
+        measurement_context["gp_noise"] = gp_noise
     available = [i for i, name in enumerate(ids) if name not in observed_ids | pending_ids]
     if not available:
         raise ValueError("no unevaluated, nonpending candidates remain")
@@ -327,7 +347,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
             method = "random_initialization"
         else:
             measured = [lookup[row["candidate_id"]] for row in observations]
-            means, stds = predict(x[measured], y, x[available], noise=noise)
+            means, stds = predict(x[measured], y, x[available], noise=observation_noise)
             ei = expected_improvement(means, stds, float(y.max()))
             # Resolve ties reproducibly without systematically selecting the first CSV row.
             best = np.flatnonzero(np.isclose(ei, ei.max(), rtol=1e-10, atol=1e-15))
@@ -338,6 +358,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
         result = {"schema_version": 1, "candidate_id": ids[chosen], "factors": dict(zip(NAMES, x[chosen].tolist())),
                   "method": method, "predicted_mean": mu, "predicted_std": sigma,
                   "expected_improvement": acquisition, "seed": seed, "noise": noise,
+                  "gp_noise": gp_noise,
                   "n_observed": len(observations), "n_pending": len(pending_ids), "input_sha256": hashes,
                   "note": "Maximizes the supplied response. A proposal is not an executable protocol. Record it as pending before asking again."}
         if measurement_context is not None:
@@ -348,6 +369,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
     cur_measured = [lookup[row["candidate_id"]] for row in observations]
     cur_x = x[cur_measured] if cur_measured else np.empty((0, len(NAMES)))
     cur_y = np.copy(y)
+    cur_noise = np.copy(observation_noise)
     cur_available = list(available)
     proposals = []
 
@@ -358,7 +380,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
             mu = sigma = acquisition = None
         else:
             avail_cand_x = x[cur_available]
-            means, stds = predict(cur_x, cur_y, avail_cand_x, noise=noise)
+            means, stds = predict(cur_x, cur_y, avail_cand_x, noise=cur_noise)
             ei = expected_improvement(means, stds, float(cur_y.max()))
             best = np.flatnonzero(np.isclose(ei, ei.max(), rtol=1e-10, atol=1e-15))
             local = int(rng.choice(best))
@@ -391,6 +413,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
                     raise ValueError(f"unknown batch strategy: {batch_strategy!r}")
             cur_x = np.vstack([cur_x, pick_x]) if len(cur_x) else pick_x
             cur_y = np.append(cur_y, imputed_y)
+            cur_noise = np.append(cur_noise, float(noise))
 
     result = {
         "schema_version": 1,
@@ -406,6 +429,7 @@ def _propose(rows, observations, pending, hashes, *, seed, noise, reserved_ids=(
         "expected_improvement": proposals[0]["expected_improvement"],
         "seed": seed,
         "noise": noise,
+        "gp_noise": gp_noise,
         "n_observed": len(observations),
         "n_pending": len(pending_ids),
         "input_sha256": hashes,
@@ -438,14 +462,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if bool(args.reserve_ledger) != bool(args.request_id):
         parser.error("--reserve-ledger and --request-id must be supplied together")
-    if args.reserve_ledger and args.batch_size > 1:
-        parser.error("batch_size > 1 with SQLite reservation ledger is not supported; use preview mode or reserve sequentially")
     try:
         if args.reserve_ledger:
             from medialoop.reservations import propose_and_reserve
             result = propose_and_reserve(args.candidates, args.observations, args.pending,
                                          ledger_path=args.reserve_ledger, request_id=args.request_id,
                                          seed=args.seed, noise=args.noise,
+                                         batch_size=args.batch_size, batch_strategy=args.batch_strategy,
                                          constraints_path=args.constraints)
         else:
             result = propose(args.candidates, args.observations, args.pending, seed=args.seed, noise=args.noise,

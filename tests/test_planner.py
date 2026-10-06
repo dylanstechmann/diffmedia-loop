@@ -52,6 +52,18 @@ class PlannerTests(unittest.TestCase):
         self.assertGreater(sigma[1], sigma[0])
         np.testing.assert_allclose(mu, [0.5, 0.5])
 
+    def test_gp_accepts_observation_specific_noise_and_rejects_misaligned_values(self):
+        x = np.array([[0, 0, 0, 0], [0, 0, 0, 0]], dtype=float)
+        y = np.array([0.0, 1.0])
+        candidates = np.array([[0, 0, 0, 0]], dtype=float)
+        mean_assumed, _ = predict(x, y, candidates, noise=0.8)
+        mean_heteroscedastic, _ = predict(x, y, candidates, noise=np.array([0.01, 0.8]))
+        self.assertLess(mean_heteroscedastic[0], mean_assumed[0])
+        with self.assertRaisesRegex(ValueError, "one value per observation"):
+            predict(x, y, candidates, noise=np.array([0.1]))
+        with self.assertRaisesRegex(ValueError, "nonnegative"):
+            predict(x, y, candidates, noise=np.array([0.1, -0.1]))
+
     def test_initial_choice_is_reproducible(self):
         result = propose(self.candidates, seed=10)
         self.assertEqual(result, propose(self.candidates, seed=10))
@@ -97,4 +109,3 @@ class PlannerTests(unittest.TestCase):
         for value in [True, 0, -1, 1.5]:
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "positive integer"):
                 propose(self.candidates, batch_size=value)
-

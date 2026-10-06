@@ -294,8 +294,24 @@ class MeasurementImportTests(unittest.TestCase):
                          hashlib.sha256(self.measurements.read_bytes()).hexdigest())
         self.assertEqual(context["conditions"]["a"]["n_biological_units"], 2)
         self.assertEqual(context["conditions"]["b"]["n_biological_units"], 1)
-        self.assertIn("Set --noise explicitly", context["note"])
+        self.assertIn("observation noise is max(--noise, assay uncertainty)", context["note"])
+        self.assertIn("Biological-unit SEM and batch/shared-unit covariance are not modeled.", context["note"])
+        self.assertIn("--noise remains the fallback and minimum noise floor.", context["note"])
         self.assertEqual(result, propose(self.candidates, observations))
+
+    def test_planner_uses_measured_assay_uncertainty_per_observation(self):
+        rows = self.default_rows()
+        for row in rows:
+            row[10] = "0.1" if row[0] == "b" else "0.01"
+        observations = self.import_observations(name="heteroscedastic", rows=rows)
+        result = propose(self.candidates, observations, noise=0.02)
+        noise = result["gp_noise"]
+        self.assertEqual(noise["policy"], "max_assumed_noise_floor_and_imported_assay_measurement_uncertainty")
+        self.assertAlmostEqual(noise["effective_observation_standard_deviation"]["a"], 0.02)
+        self.assertGreater(noise["effective_observation_standard_deviation"]["b"], 0.02)
+        self.assertFalse(noise["biological_unit_sem_used"])
+        self.assertFalse(noise["shared_unit_or_batch_covariance_modeled"])
+        self.assertEqual(result["measurement_context"]["gp_noise"], noise)
 
     def test_planner_accepts_candidate_with_only_failed_wells(self):
         rows = self.default_rows() + [

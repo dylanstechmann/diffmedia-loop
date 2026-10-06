@@ -273,7 +273,7 @@ def _aggregate_measurements(candidates_path, measurements_path, *, direction):
         "conditions": condition_summary,
         "notes": [
             "Technical replicates are averaged within biological_unit_id; biological units receive equal weight.",
-            "Biological-unit SD and SEM describe the imported replicates and are not used by the fixed-noise GP.",
+            "Biological-unit SD and SEM remain provenance and are not used as GP observation noise. When measured, propagated assay measurement uncertainty is used per observation with the planner noise floor.",
             "When provided, well measurement standard uncertainties are propagated separately through technical and biological means under independence; shared calibration uncertainty is not included.",
             "The planner maximizes one declared endpoint and does not model shared-unit, batch, or assay covariance.",
             "Failed wells are retained in this report and excluded from numeric aggregation; they are never imputed.",

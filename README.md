@@ -63,7 +63,8 @@ factor separately does not validate their Cartesian product or timing.
 - Observations: `candidate_id,response`; the finite response is maximized.
 - Pending: `candidate_id`; completed and pending IDs cannot overlap.
 - A candidate can appear once in observations. Aggregate replicates explicitly
-  and retain their raw data elsewhere; this GP assumes a common noise scale.
+  and retain their raw data elsewhere. Ordinary observations use a common noise
+  scale; validated measurement imports can provide per-observation assay noise.
 - With fewer than two observations the selection is random and reproducible.
   Otherwise it uses expected improvement with fixed GP hyperparameters.
 - Without a reservation ledger, record the proposal in the pending table
@@ -74,7 +75,10 @@ factor separately does not validate their Cartesian product or timing.
 Unknown IDs, duplicate conditions, nonfinite values, out-of-box factors and an
 exhausted candidate set are rejected. Output files are created exclusively.
 `--noise` is an assumed response standard deviation, not an estimated noise
-model. The fixed GP is a baseline and its uncertainty is not calibrated on cells.
+model. For imported observations with measured assay uncertainty, the GP uses
+the larger of that uncertainty and `--noise` for each observation. Otherwise it
+uses the common `--noise` scale. The fixed GP is a baseline and its uncertainty
+is not calibrated on cells.
 
 ### Import well-level assay measurements
 
@@ -116,11 +120,13 @@ not define a combined rejuvenation score.
 
 The proposal carries the assay, endpoint, units, raw-measurement hash, candidate
 hash, aggregation rule, failed-well counts, replicate summaries, and imported
-uncertainty. These data are provenance and are **not used by the current GP**:
-it still assumes the `--noise` common response scale and does not model
-per-condition uncertainty, reused biological units across conditions, batch
-effects, or assay covariance. A reported SEM is not a calibrated GP noise value.
-Review those limits before using proposals to plan another experiment.
+uncertainty. When assay measurement uncertainty is available, the GP uses the
+larger of that value and the assumed `--noise` floor for each observed
+condition. The floor is not combined in quadrature because its sources are not
+decomposed. Biological-unit SEM remains provenance only; reused biological
+units across conditions, batch effects, shared calibration uncertainty, and
+assay covariance are not modeled. A reported SEM is not a calibrated GP noise
+value. Review those limits before using proposals to plan another experiment.
 
 ## Reserve a candidate atomically
 
@@ -134,15 +140,17 @@ medialoop-plan --candidates examples/candidates.csv \
 ```
 
 Selection and reservation commit in a single transaction before the proposal
-is returned. Concurrent processes using that ledger cannot reserve the same
-condition under different request IDs. Existing observed/pending CSV entries
-are also excluded. The command reads those CSVs and writes the ledger and
-proposal JSON; it never edits the CSVs. Input hashes describe the exact bytes
-parsed for the original proposal.
+is returned. `--batch-size` reserves every selected condition atomically under
+the same request ID; if any insert fails, the whole batch rolls back.
+Concurrent processes using that ledger cannot reserve the same condition under
+different request IDs. Existing observed/pending CSV entries are also
+excluded. The command reads those CSVs and writes the ledger and proposal JSON;
+it never edits the CSVs. Input hashes describe the exact bytes parsed for the
+original proposal.
 
 Choose a new `--request-id` for each new request. Retry with the **same** ID,
-candidate table, seed and noise to recover its original proposal, even after
-observations change. This also recovers a committed reservation after output
+candidate table, seed, noise, batch size and strategy to recover its original
+proposal, even after observations change. This also recovers a committed reservation after output
 export fails or the caller loses its connection. Retry with a new output path
 if the previous export is partial or contains different text; an existing exact
 export is accepted. A retry returns a historical proposal and does not reserve

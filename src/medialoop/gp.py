@@ -29,7 +29,7 @@ def _kernel(a: np.ndarray, b: np.ndarray, length: float) -> np.ndarray:
     return np.exp(-0.5 * dist / (length ** 2))
 
 
-def predict(x_train: np.ndarray, y: np.ndarray, x_cand: np.ndarray, length: float = 0.35, noise: float = 0.02):
+def predict(x_train: np.ndarray, y: np.ndarray, x_cand: np.ndarray, length: float = 0.35, noise: float | np.ndarray = 0.02):
     x_train, y, x_cand = (np.asarray(value, dtype=float) for value in (x_train, y, x_cand))
     if (x_train.ndim != 2 or x_train.shape[1] != len(FACTORS) or not len(x_train)
             or y.shape != (len(x_train),) or x_cand.ndim != 2
@@ -37,16 +37,20 @@ def predict(x_train: np.ndarray, y: np.ndarray, x_cand: np.ndarray, length: floa
         raise ValueError("GP needs nonempty factor matrices and one response per training row")
     if not all(np.isfinite(value).all() for value in (x_train, y, x_cand)):
         raise ValueError("GP inputs must be finite")
-    if not np.isfinite(length) or length <= 0 or not np.isfinite(noise) or noise < 0:
-        raise ValueError("length must be positive and noise nonnegative, both finite")
+    noise_values = np.asarray(noise, dtype=float)
+    if noise_values.ndim == 0:
+        noise_values = np.full(len(x_train), float(noise_values))
+    if (not np.isfinite(length) or length <= 0 or noise_values.shape != (len(x_train),)
+            or not np.isfinite(noise_values).all() or (noise_values < 0).any()):
+        raise ValueError("length must be positive; noise must be a finite, nonnegative scalar or one value per observation")
     y_mean = float(y.mean())
     # Flat initial readouts still leave uncertainty away from measured points.
-    y_std = max(float(y.std()), noise, 1e-3)
+    y_std = max(float(y.std()), float(noise_values.max()), 1e-3)
     yn = (y - y_mean) / y_std
     xn = normalize(x_train)
     cn = normalize(x_cand)
-    noise_n = (noise / y_std) ** 2
-    k = _kernel(xn, xn, length) + (noise_n + 1e-6) * np.eye(len(xn))
+    noise_n = (noise_values / y_std) ** 2
+    k = _kernel(xn, xn, length) + np.diag(noise_n + 1e-6)
     chol = np.linalg.cholesky(k)
     alpha = np.linalg.solve(chol.T, np.linalg.solve(chol, yn))
     ks = _kernel(cn, xn, length)
@@ -74,4 +78,3 @@ def thompson_draw(mu: np.ndarray, sigma: np.ndarray, rng: np.random.Generator) -
     """One posterior draw per candidate. Not a multi-sample Thompson average."""
     sigma = np.maximum(np.asarray(sigma, dtype=float), 1e-9)
     return rng.normal(np.asarray(mu, dtype=float), sigma)
-
