@@ -1,8 +1,11 @@
 # Diffmedia loop
 
+This is a personal hobby and learning project, developed with substantial
+assistance from AI coding tools.
+
 A closed-loop planner for **in-vitro** differentiation-media factors.
 
-It searches a box taken from published windows (CHIR99021, IWP2, SB431542, LDN-193189), fits a small Gaussian process, and proposes the next point by expected improvement. The response it optimizes in this repository is a cartoon: Wnt on then Wnt off scores as "cardiac"; dual SMAD inhibition scores as "neural"; each punishes the other. That is not a differentiation dataset. It is a bake-off of the planner against random search at the same budget, which is the thing you can prove with no hood.
+It searches a box taken from published windows (CHIR99021, IWP2, SB431542, LDN-193189), fits a small Gaussian process, and proposes the next point by expected improvement. The response it optimizes in this repository is a cartoon: Wnt on then Wnt off scores as "cardiac"; dual SMAD inhibition scores as "neural"; each punishes the other. That is not a differentiation dataset. The comparison with random search at the same budget measures planner behavior on this synthetic surface.
 
 On 12 seeds and a budget of 20 evaluations, mean best score was about **0.74 vs 0.24** (cardiac cartoon) and **0.74 vs 0.16** (neural cartoon). Replace `observe` with a real column (qPCR, a troponin fraction, a score from [brightfield-colony-qc](https://github.com/dylanstechmann/brightfield-colony-qc)) before anyone plates the suggestion.
 
