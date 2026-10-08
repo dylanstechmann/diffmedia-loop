@@ -240,6 +240,32 @@ It is not a dose, and it is not a reason to plate a well. A neural policy is
 intentionally absent: a course project can add one behind the same regret
 and violation columns without replacing the expected-improvement baseline.
 
+### Batch-aware policy added 2026-10-08, and what it showed
+
+A sixth policy, `penalized_expected_improvement`, scores each candidate by expected improvement
+times a penalty that is zero at an already-picked point and rises with distance
+(`1 - exp(-d²/(2·0.25²))` in window-scaled coordinates, applied per earlier pick in the batch).
+The length 0.25 was fixed before the first run and was not tuned. Expected improvement is still
+the planner, and the original five policies are unchanged.
+
+Twelve seeds (0 to 11), default settings, `PYTHONPATH=src python3 -m medialoop.bakeoff --objective <name> --seeds 12`,
+Python 3.12.3. Mean final simple regret against the best grid point (lower is better); the
+full output, including cumulative regret and violations, is in
+[docs/bakeoff_12seeds_2026-10-08.json](docs/bakeoff_12seeds_2026-10-08.json):
+
+| Objective | expected improvement | penalized EI | UCB | Thompson | random |
+|---|---:|---:|---:|---:|---:|
+| cardiac | 0.588 | 0.680 | 0.661 | 0.716 | 0.825 |
+| neural | 0.488 | 0.447 | 0.685 | 0.565 | 0.758 |
+| cardiac_shifted | 0.584 | 0.478 | 0.518 | 0.680 | 0.927 |
+| neural_shifted | 0.334 | 0.433 | 0.384 | 0.599 | 0.602 |
+
+The result is mixed: penalized EI has lower regret on two objectives and higher on two, so these
+twelve seeds do not support replacing expected improvement. It records no batch-uniqueness
+violations (the repeat control records 48 on each objective). Twelve seeds on a 180-point
+cartoon grid give wide uncertainty and no interval is computed here. The cartoon surfaces are
+synthetic; none of this is a cell readout.
+
 Two shifted objectives, `--objective cardiac_shifted` and `neural_shifted`,
 move the cartoon peak to a different on-grid location (6/2 µM CHIR/IWP2 and
 5 µM / 250 nM SB431542/LDN). They check that the planner follows the surface

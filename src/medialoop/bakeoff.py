@@ -16,6 +16,7 @@ import numpy as np
 
 from medialoop.gp import expected_improvement, predict, thompson_draw, upper_confidence_bound
 from medialoop.loop import _row, inside_bounds
+from medialoop.space import FACTORS
 from medialoop.surfaces import OBJECTIVES
 
 POLICIES = (
@@ -24,7 +25,13 @@ POLICIES = (
     "ucb",
     "thompson",
     "repeat_expected_improvement",
+    "penalized_expected_improvement",
 )
+
+# Batch-aware policy constants, fixed before the first run: a pick multiplies each later candidate's
+# expected improvement by 1 - exp(-d^2 / (2 * LENGTH^2)), with d the Euclidean distance in
+# window-scaled (0 to 1) coordinates. LENGTH is a stated choice, not tuned on the bake-off.
+PENALTY_LENGTH = 0.25
 
 
 def candidate_grid() -> np.ndarray:
@@ -37,8 +44,20 @@ def candidate_grid() -> np.ndarray:
     return np.asarray(rows, dtype=float)
 
 
+def batch_penalty(grid_pool: np.ndarray, picked: np.ndarray) -> np.ndarray:
+    """Multiplicative penalty in [0, 1] that is zero at an already picked point and rises with distance."""
+    if len(picked) == 0:
+        return np.ones(len(grid_pool))
+    lows = np.array([item["low"] for item in FACTORS], dtype=float)
+    spans = np.array([item["high"] - item["low"] for item in FACTORS], dtype=float)
+    scaled_pool = (grid_pool - lows) / spans
+    scaled_picked = (picked - lows) / spans
+    distance_sq = ((scaled_pool[:, None, :] - scaled_picked[None, :, :]) ** 2).sum(axis=2)
+    return np.prod(1.0 - np.exp(-distance_sq / (2.0 * PENALTY_LENGTH ** 2)), axis=1)
+
+
 def _scores(policy, mu, sigma, fantasy_y, rng, kappa):
-    if policy in ("expected_improvement", "repeat_expected_improvement"):
+    if policy in ("expected_improvement", "repeat_expected_improvement", "penalized_expected_improvement"):
         return expected_improvement(mu, sigma, float(np.max(fantasy_y)))
     if policy == "ucb":
         return upper_confidence_bound(mu, sigma, kappa)
@@ -98,6 +117,8 @@ def campaign(
             else:
                 mu, sigma = predict(fantasy_x, fantasy_y, grid[pool], noise=noise)
                 score = _scores(policy, mu, sigma, fantasy_y, rng, kappa)
+                if policy == "penalized_expected_improvement":
+                    score = score * batch_penalty(grid[pool], grid[picks])
                 tied = np.flatnonzero(np.isclose(score, score.max(), rtol=1e-10, atol=1e-15))
                 # The repeat policy always re-selects the lowest index so a violation is forced.
                 local = int(tied[0] if policy == "repeat_expected_improvement" else rng.choice(tied))
@@ -105,7 +126,7 @@ def campaign(
             if choice in observed or choice in picks:
                 violations += 1
             picks.append(choice)
-            if policy != "repeat_expected_improvement":
+            if policy not in ("repeat_expected_improvement", "penalized_expected_improvement"):
                 mu_c, _sigma_c = predict(fantasy_x, fantasy_y, grid[[choice]], noise=noise)
                 fantasy_y = np.append(fantasy_y, float(mu_c[0]))
                 fantasy_x = np.vstack([fantasy_x, grid[choice]])

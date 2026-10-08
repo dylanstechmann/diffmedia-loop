@@ -3,7 +3,9 @@ import json
 import unittest
 from unittest.mock import patch
 
-from medialoop.bakeoff import POLICIES, campaign, candidate_grid, main as bakeoff_main
+import numpy as np
+
+from medialoop.bakeoff import PENALTY_LENGTH, POLICIES, batch_penalty, campaign, candidate_grid, main as bakeoff_main
 from medialoop.loop import inside_bounds
 from medialoop.surfaces import OBJECTIVES, cardiac, cardiac_shifted, neural_shifted
 
@@ -15,7 +17,7 @@ class BakeoffTests(unittest.TestCase):
         self.assertIn((8.0, 4.0, 0.0, 0.0), {tuple(row) for row in grid.tolist()})
 
     def test_guarded_policies_do_not_repeat_or_leave_the_box(self):
-        for policy in ("random", "expected_improvement", "ucb", "thompson"):
+        for policy in ("random", "expected_improvement", "ucb", "thompson", "penalized_expected_improvement"):
             result = campaign(cardiac, policy, seed=1, n_init=4, rounds=3, batch_size=2)
             self.assertEqual(result["violations"], 0, policy)
             self.assertEqual(result["n_unique"], result["n_evaluations"], policy)
@@ -31,6 +33,22 @@ class BakeoffTests(unittest.TestCase):
         ei = [campaign(cardiac, "expected_improvement", seed=s, rounds=5, batch_size=2)["final_simple_regret"] for s in range(6)]
         rnd = [campaign(cardiac, "random", seed=s, rounds=5, batch_size=2)["final_simple_regret"] for s in range(6)]
         self.assertLess(sum(ei) / len(ei), sum(rnd) / len(rnd) - 0.05)
+
+    def test_batch_penalty_is_zero_at_a_pick_and_rises_toward_one_with_distance(self):
+        grid = candidate_grid()
+        picked = grid[[0]]
+        penalty = batch_penalty(grid, picked)
+        self.assertEqual(penalty[0], 0.0)
+        self.assertTrue(np.all((penalty >= 0.0) & (penalty <= 1.0)))
+        order = np.argsort(np.linalg.norm((grid - grid.min(0)) / (grid.max(0) - grid.min(0))
+                                          - (picked - grid.min(0)) / (grid.max(0) - grid.min(0)), axis=1))
+        self.assertLess(penalty[order[1]], penalty[order[-1]])
+        self.assertTrue(np.all(batch_penalty(grid, grid[:0]) == 1.0))
+        self.assertEqual(PENALTY_LENGTH, 0.25)
+
+    def test_the_original_four_policies_and_the_negative_control_are_all_still_present(self):
+        for policy in ("random", "expected_improvement", "ucb", "thompson", "repeat_expected_improvement"):
+            self.assertIn(policy, POLICIES)
 
     def test_unknown_policy_is_rejected(self):
         self.assertNotIn("dqn", POLICIES)
